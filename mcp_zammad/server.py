@@ -794,6 +794,49 @@ def _build_export_article(article: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _resolve_export_path(output_path: str) -> Path:
+    """Resolve and validate an export output path against the configured export directory.
+
+    Export writes to the host filesystem, so the destination is confined to the directory
+    named by ZAMMAD_EXPORT_DIR. The variable is required: without it the export tool is
+    unavailable rather than defaulting to a writable location.
+
+    Symlinks are resolved before the containment check, so a symlink inside the export
+    directory cannot be used to escape it.
+
+    Args:
+        output_path: Requested output path, absolute or relative to the export directory.
+
+    Returns:
+        Path: The resolved, validated absolute path.
+
+    Raises:
+        ValueError: If ZAMMAD_EXPORT_DIR is unset, is not a directory, or the resolved
+            path would fall outside it.
+    """
+    export_dir_raw = os.environ.get("ZAMMAD_EXPORT_DIR")
+    if not export_dir_raw:
+        raise ValueError(
+            "Ticket export is disabled: ZAMMAD_EXPORT_DIR is not set. "
+            "Set it to a directory the server may write exports into."
+        )
+
+    export_dir = Path(export_dir_raw).expanduser().resolve()
+    if not export_dir.is_dir():
+        raise ValueError(f"ZAMMAD_EXPORT_DIR does not exist or is not a directory: {export_dir}")
+
+    candidate = Path(output_path).expanduser()
+    resolved = (export_dir / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()
+
+    if resolved != export_dir and export_dir not in resolved.parents:
+        raise ValueError(
+            f"Refusing to write outside the export directory. "
+            f"Resolved path {resolved} is not contained in ZAMMAD_EXPORT_DIR {export_dir}."
+        )
+
+    return resolved
+
+
 def _build_export_record(ticket_data: dict[str, Any], include_internal: bool) -> dict[str, Any]:
     """Build a JSONL export record from ticket data."""
     conversation = []
@@ -826,10 +869,11 @@ def _format_export_summary(
     errors: list[str],
     elapsed: float,
     use_search: bool,
+    export_path: Path | None = None,
 ) -> str:
     """Format export summary as markdown."""
     lines = ["# Ticket Export Complete", ""]
-    lines.append(f"- **File**: `{params.output_path}`")
+    lines.append(f"- **File**: `{export_path if export_path is not None else params.output_path}`")
     lines.append(f"- **Tickets exported**: {exported_count}")
     lines.append(f"- **Errors**: {error_count}")
     lines.append(f"- **Elapsed time**: {elapsed:.1f}s")
@@ -1619,7 +1663,8 @@ class ZammadMCPServer:
 
             Args:
                 params (TicketExportParams): Export parameters containing:
-                    - output_path (str): Path to output JSONL file (must end in .jsonl)
+                    - output_path (str): Path to output JSONL file (must end in .jsonl).
+                      Relative to ZAMMAD_EXPORT_DIR; absolute paths must resolve inside it.
                     - query (str | None): Free text search filter
                     - group (str | None): Filter by group name
                     - state (str | None): Filter by state name
@@ -1671,12 +1716,14 @@ class ZammadMCPServer:
 
             use_search = any([params.query, params.group, params.state, params.created_after, params.created_before])
 
+            export_path = _resolve_export_path(params.output_path)
+
             exported_count = 0
             error_count = 0
             errors: list[str] = []
             page = params.resume_from_page
 
-            with open(params.output_path, "a") as f:
+            with open(export_path, "a") as f:
                 while page <= MAX_PAGES_FOR_TICKET_SCAN:
                     batch = _fetch_export_batch(client, params, use_search, page)
                     if not batch:
@@ -1711,7 +1758,7 @@ class ZammadMCPServer:
                     page += 1
 
             elapsed = time.monotonic() - start_time
-            return _format_export_summary(params, exported_count, error_count, errors, elapsed, use_search)
+            return _format_export_summary(params, exported_count, error_count, errors, elapsed, use_search, export_path)
 
     def _setup_user_org_tools(self) -> None:
         """Register user and organization tools."""

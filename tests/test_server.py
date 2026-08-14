@@ -49,6 +49,7 @@ from mcp_zammad.server import (
     AttachmentDeletionError,
     ZammadMCPServer,
     _format_ticket_detail_markdown,
+    _resolve_export_path,
     _strip_html_tags,
     main,
     mcp,
@@ -3284,7 +3285,14 @@ def _make_ticket_data(ticket_id: int, title: str = "Test Ticket") -> dict:
     }
 
 
-def test_export_tickets_basic(mock_zammad_client, decorator_capturer, tmp_path):
+@pytest.fixture
+def export_dir(tmp_path, monkeypatch):
+    """Confine ticket exports to a per-test directory via ZAMMAD_EXPORT_DIR."""
+    monkeypatch.setenv("ZAMMAD_EXPORT_DIR", str(tmp_path))
+    return tmp_path
+
+
+def test_export_tickets_basic(mock_zammad_client, decorator_capturer, export_dir):
     """Test basic export with 2 pages of tickets via list endpoint."""
     mock_instance, _ = mock_zammad_client
 
@@ -3305,7 +3313,7 @@ def test_export_tickets_basic(mock_zammad_client, decorator_capturer, tmp_path):
     server_inst.get_client = lambda: server_inst.client  # type: ignore[method-assign, assignment, return-value]
     server_inst._setup_tools()
 
-    output_file = str(tmp_path / "export.jsonl")
+    output_file = str(export_dir / "export.jsonl")
     params = TicketExportParams(output_path=output_file, delay_seconds=0.0, per_page=50)
     result = test_tools["zammad_export_tickets"](params)
 
@@ -3331,7 +3339,7 @@ def test_export_tickets_basic(mock_zammad_client, decorator_capturer, tmp_path):
     mock_instance.search_tickets.assert_not_called()
 
 
-def test_export_tickets_filtered_uses_search(mock_zammad_client, decorator_capturer, tmp_path):
+def test_export_tickets_filtered_uses_search(mock_zammad_client, decorator_capturer, export_dir):
     """Test that filtered export uses search endpoint with 10K limit warning."""
     mock_instance, _ = mock_zammad_client
 
@@ -3348,7 +3356,7 @@ def test_export_tickets_filtered_uses_search(mock_zammad_client, decorator_captu
     server_inst.get_client = lambda: server_inst.client  # type: ignore[method-assign, assignment, return-value]
     server_inst._setup_tools()
 
-    output_file = str(tmp_path / "filtered.jsonl")
+    output_file = str(export_dir / "filtered.jsonl")
     params = TicketExportParams(output_path=output_file, group="Support", delay_seconds=0.0)
     result = test_tools["zammad_export_tickets"](params)
 
@@ -3358,7 +3366,7 @@ def test_export_tickets_filtered_uses_search(mock_zammad_client, decorator_captu
     mock_instance.list_tickets.assert_not_called()
 
 
-def test_export_tickets_internal_articles_filtered(mock_zammad_client, decorator_capturer, tmp_path):
+def test_export_tickets_internal_articles_filtered(mock_zammad_client, decorator_capturer, export_dir):
     """Test that internal articles are filtered when include_internal_articles=False."""
     mock_instance, _ = mock_zammad_client
 
@@ -3372,7 +3380,7 @@ def test_export_tickets_internal_articles_filtered(mock_zammad_client, decorator
     server_inst.get_client = lambda: server_inst.client  # type: ignore[method-assign, assignment, return-value]
     server_inst._setup_tools()
 
-    output_file = str(tmp_path / "no_internal.jsonl")
+    output_file = str(export_dir / "no_internal.jsonl")
     params = TicketExportParams(output_path=output_file, delay_seconds=0.0, include_internal_articles=False)
     test_tools["zammad_export_tickets"](params)
 
@@ -3383,7 +3391,7 @@ def test_export_tickets_internal_articles_filtered(mock_zammad_client, decorator
     assert record["conversation"][0]["internal"] is False
 
 
-def test_export_tickets_include_internal_articles(mock_zammad_client, decorator_capturer, tmp_path):
+def test_export_tickets_include_internal_articles(mock_zammad_client, decorator_capturer, export_dir):
     """Test that internal articles are included when include_internal_articles=True."""
     mock_instance, _ = mock_zammad_client
 
@@ -3397,7 +3405,7 @@ def test_export_tickets_include_internal_articles(mock_zammad_client, decorator_
     server_inst.get_client = lambda: server_inst.client  # type: ignore[method-assign, assignment, return-value]
     server_inst._setup_tools()
 
-    output_file = str(tmp_path / "with_internal.jsonl")
+    output_file = str(export_dir / "with_internal.jsonl")
     params = TicketExportParams(output_path=output_file, delay_seconds=0.0, include_internal_articles=True)
     test_tools["zammad_export_tickets"](params)
 
@@ -3406,7 +3414,7 @@ def test_export_tickets_include_internal_articles(mock_zammad_client, decorator_
     assert len(record["conversation"]) == 2
 
 
-def test_export_tickets_throttle_delay(mock_zammad_client, decorator_capturer, tmp_path):
+def test_export_tickets_throttle_delay(mock_zammad_client, decorator_capturer, export_dir):
     """Test that time.sleep is called with configured delay between ticket fetches."""
     mock_instance, _ = mock_zammad_client
 
@@ -3420,7 +3428,7 @@ def test_export_tickets_throttle_delay(mock_zammad_client, decorator_capturer, t
     server_inst.get_client = lambda: server_inst.client  # type: ignore[method-assign, assignment, return-value]
     server_inst._setup_tools()
 
-    output_file = str(tmp_path / "throttle.jsonl")
+    output_file = str(export_dir / "throttle.jsonl")
     with patch("mcp_zammad.server.time.sleep") as mock_sleep:
         params = TicketExportParams(output_path=output_file, delay_seconds=1.5)
         test_tools["zammad_export_tickets"](params)
@@ -3429,7 +3437,7 @@ def test_export_tickets_throttle_delay(mock_zammad_client, decorator_capturer, t
     mock_sleep.assert_called_with(1.5)
 
 
-def test_export_tickets_per_ticket_error_handling(mock_zammad_client, decorator_capturer, tmp_path):
+def test_export_tickets_per_ticket_error_handling(mock_zammad_client, decorator_capturer, export_dir):
     """Test that errors on individual tickets don't stop the export."""
     mock_instance, _ = mock_zammad_client
 
@@ -3447,7 +3455,7 @@ def test_export_tickets_per_ticket_error_handling(mock_zammad_client, decorator_
     server_inst.get_client = lambda: server_inst.client  # type: ignore[method-assign, assignment, return-value]
     server_inst._setup_tools()
 
-    output_file = str(tmp_path / "errors.jsonl")
+    output_file = str(export_dir / "errors.jsonl")
     params = TicketExportParams(output_path=output_file, delay_seconds=0.0)
     result = test_tools["zammad_export_tickets"](params)
 
@@ -3460,7 +3468,7 @@ def test_export_tickets_per_ticket_error_handling(mock_zammad_client, decorator_
     assert len(lines) == 2
 
 
-def test_export_tickets_resume_from_page(mock_zammad_client, decorator_capturer, tmp_path):
+def test_export_tickets_resume_from_page(mock_zammad_client, decorator_capturer, export_dir):
     """Test that resume_from_page starts pagination at the correct page."""
     mock_instance, _ = mock_zammad_client
 
@@ -3474,7 +3482,7 @@ def test_export_tickets_resume_from_page(mock_zammad_client, decorator_capturer,
     server_inst.get_client = lambda: server_inst.client  # type: ignore[method-assign, assignment, return-value]
     server_inst._setup_tools()
 
-    output_file = str(tmp_path / "resume.jsonl")
+    output_file = str(export_dir / "resume.jsonl")
     params = TicketExportParams(output_path=output_file, delay_seconds=0.0, resume_from_page=3)
     result = test_tools["zammad_export_tickets"](params)
 
@@ -3484,7 +3492,7 @@ def test_export_tickets_resume_from_page(mock_zammad_client, decorator_capturer,
     assert first_call.kwargs["page"] == 3 or first_call[1].get("page") == 3
 
 
-def test_export_tickets_max_tickets_cap(mock_zammad_client, decorator_capturer, tmp_path):
+def test_export_tickets_max_tickets_cap(mock_zammad_client, decorator_capturer, export_dir):
     """Test that max_tickets stops export after N tickets."""
     mock_instance, _ = mock_zammad_client
 
@@ -3502,7 +3510,7 @@ def test_export_tickets_max_tickets_cap(mock_zammad_client, decorator_capturer, 
     server_inst.get_client = lambda: server_inst.client  # type: ignore[method-assign, assignment, return-value]
     server_inst._setup_tools()
 
-    output_file = str(tmp_path / "max.jsonl")
+    output_file = str(export_dir / "max.jsonl")
     params = TicketExportParams(output_path=output_file, delay_seconds=0.0, max_tickets=2)
     result = test_tools["zammad_export_tickets"](params)
 
@@ -3512,7 +3520,7 @@ def test_export_tickets_max_tickets_cap(mock_zammad_client, decorator_capturer, 
     assert len(lines) == 2
 
 
-def test_export_tickets_empty_results(mock_zammad_client, decorator_capturer, tmp_path):
+def test_export_tickets_empty_results(mock_zammad_client, decorator_capturer, export_dir):
     """Test export with no tickets returns clean result."""
     mock_instance, _ = mock_zammad_client
 
@@ -3525,7 +3533,7 @@ def test_export_tickets_empty_results(mock_zammad_client, decorator_capturer, tm
     server_inst.get_client = lambda: server_inst.client  # type: ignore[method-assign, assignment, return-value]
     server_inst._setup_tools()
 
-    output_file = str(tmp_path / "empty.jsonl")
+    output_file = str(export_dir / "empty.jsonl")
     params = TicketExportParams(output_path=output_file, delay_seconds=0.0)
     result = test_tools["zammad_export_tickets"](params)
 
@@ -3557,7 +3565,7 @@ def test_export_params_validation():
     assert params.output_path == "/tmp/test.jsonl"
 
     # Invalid: not .jsonl
-    with pytest.raises(ValidationError, match="must end with .jsonl"):
+    with pytest.raises(ValidationError, match=r"must end with \.jsonl"):
         TicketExportParams(output_path="/tmp/test.json")
 
     # Invalid: delay too high
@@ -3577,7 +3585,7 @@ def test_export_params_validation():
         TicketExportParams(output_path="/tmp/test.jsonl", max_tickets=0)
 
 
-def test_export_tickets_date_filters_use_search(mock_zammad_client, decorator_capturer, tmp_path):
+def test_export_tickets_date_filters_use_search(mock_zammad_client, decorator_capturer, export_dir):
     """Test that date filters trigger search endpoint."""
     mock_instance, _ = mock_zammad_client
 
@@ -3591,7 +3599,7 @@ def test_export_tickets_date_filters_use_search(mock_zammad_client, decorator_ca
     server_inst.get_client = lambda: server_inst.client  # type: ignore[method-assign, assignment, return-value]
     server_inst._setup_tools()
 
-    output_file = str(tmp_path / "dates.jsonl")
+    output_file = str(export_dir / "dates.jsonl")
     params = TicketExportParams(
         output_path=output_file,
         created_after="2024-01-01",
@@ -3606,3 +3614,78 @@ def test_export_tickets_date_filters_use_search(mock_zammad_client, decorator_ca
     call_kwargs = mock_instance.search_tickets.call_args_list[0].kwargs
     assert call_kwargs["created_after"] == "2024-01-01"
     assert call_kwargs["created_before"] == "2024-12-31"
+
+
+class TestResolveExportPath:
+    """Tests for export path confinement (_resolve_export_path)."""
+
+    def test_requires_export_dir_env(self, monkeypatch):
+        """Export is disabled when ZAMMAD_EXPORT_DIR is unset."""
+        monkeypatch.delenv("ZAMMAD_EXPORT_DIR", raising=False)
+        with pytest.raises(ValueError, match="ZAMMAD_EXPORT_DIR is not set"):
+            _resolve_export_path("export.jsonl")
+
+    def test_rejects_missing_export_dir(self, tmp_path, monkeypatch):
+        """A configured directory that does not exist is rejected."""
+        monkeypatch.setenv("ZAMMAD_EXPORT_DIR", str(tmp_path / "nope"))
+        with pytest.raises(ValueError, match="not a directory"):
+            _resolve_export_path("export.jsonl")
+
+    def test_relative_path_resolves_inside_export_dir(self, tmp_path, monkeypatch):
+        """Relative paths are joined to the export directory."""
+        monkeypatch.setenv("ZAMMAD_EXPORT_DIR", str(tmp_path))
+        assert _resolve_export_path("export.jsonl") == (tmp_path / "export.jsonl").resolve()
+
+    def test_nested_relative_path_allowed(self, tmp_path, monkeypatch):
+        """Subdirectories of the export directory are permitted."""
+        monkeypatch.setenv("ZAMMAD_EXPORT_DIR", str(tmp_path))
+        (tmp_path / "sub").mkdir()
+        assert _resolve_export_path("sub/export.jsonl") == (tmp_path / "sub" / "export.jsonl").resolve()
+
+    def test_rejects_parent_traversal(self, tmp_path, monkeypatch):
+        """../ escapes are rejected."""
+        export_root = tmp_path / "exports"
+        export_root.mkdir()
+        monkeypatch.setenv("ZAMMAD_EXPORT_DIR", str(export_root))
+        with pytest.raises(ValueError, match="outside the export directory"):
+            _resolve_export_path("../escaped.jsonl")
+
+    def test_rejects_absolute_path_outside(self, tmp_path, monkeypatch):
+        """Absolute paths outside the export directory are rejected."""
+        export_root = tmp_path / "exports"
+        export_root.mkdir()
+        monkeypatch.setenv("ZAMMAD_EXPORT_DIR", str(export_root))
+        with pytest.raises(ValueError, match="outside the export directory"):
+            _resolve_export_path(str(tmp_path / "elsewhere.jsonl"))
+
+    def test_accepts_absolute_path_inside(self, tmp_path, monkeypatch):
+        """Absolute paths inside the export directory are accepted."""
+        monkeypatch.setenv("ZAMMAD_EXPORT_DIR", str(tmp_path))
+        target = tmp_path / "export.jsonl"
+        assert _resolve_export_path(str(target)) == target.resolve()
+
+    def test_rejects_symlink_escape(self, tmp_path, monkeypatch):
+        """A symlink inside the export directory cannot redirect writes outside it."""
+        export_root = tmp_path / "exports"
+        export_root.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (export_root / "link").symlink_to(outside)
+        monkeypatch.setenv("ZAMMAD_EXPORT_DIR", str(export_root))
+        with pytest.raises(ValueError, match="outside the export directory"):
+            _resolve_export_path("link/escaped.jsonl")
+
+    def test_export_tool_surfaces_disabled_error(self, mock_zammad_client, decorator_capturer, monkeypatch):
+        """The export tool fails clearly when the export directory is not configured."""
+        monkeypatch.delenv("ZAMMAD_EXPORT_DIR", raising=False)
+        mock_instance, _ = mock_zammad_client
+        server_inst = ZammadMCPServer()
+        server_inst.client = mock_instance
+        test_tools, capture_tool = decorator_capturer(server_inst.mcp.tool)
+        server_inst.mcp.tool = capture_tool  # type: ignore[method-assign, assignment]
+        server_inst.get_client = lambda: server_inst.client  # type: ignore[method-assign, assignment, return-value]
+        server_inst._setup_tools()
+
+        params = TicketExportParams(output_path="export.jsonl", delay_seconds=0.0)
+        with pytest.raises(ValueError, match="ZAMMAD_EXPORT_DIR is not set"):
+            test_tools["zammad_export_tickets"](params)
