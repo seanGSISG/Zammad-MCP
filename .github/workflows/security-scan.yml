@@ -20,17 +20,17 @@ jobs:
       
     steps:
       - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@681c641aba71e4a1c380be3ab5e12ad51f415867 # v7.1.6
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          version: "latest"
+          version: "0.11.28"
 
       - name: Set up Python
-        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: '3.14'
+          python-version-file: ".python-version"
 
       - name: Install dependencies
         run: |
@@ -51,7 +51,7 @@ jobs:
           uv run bandit -r mcp_zammad/ -f sarif -o bandit-sarif.json
 
       - name: Upload Bandit results to GitHub Security
-        uses: github/codeql-action/upload-sarif@5d4e8d1aca955e8d8589aabd499c5cae939e33c7 # v4
+        uses: github/codeql-action/upload-sarif@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4
         if: always()
         with:
           sarif_file: bandit-sarif.json
@@ -64,7 +64,6 @@ jobs:
           api-key: ${{ github.repository == 'basher83/Zammad-MCP' && secrets.SAFETY_API_KEY || '' }}
 
       - name: Run pip-audit
-        continue-on-error: true
         run: |
           echo "Running pip-audit dependency scan..."
           # Will exit non-zero if vulnerabilities are found
@@ -73,17 +72,17 @@ jobs:
             echo "⚠️  pip-audit found vulnerabilities (exit code: $EXIT_CODE)"
             # Generate a summary of vulnerabilities
             if [ -f pip-audit-report.json ]; then
-              VULN_COUNT=$(jq '.vulnerabilities | length' pip-audit-report.json)
+              VULN_COUNT=$(jq '[.dependencies[]?.vulns[]?] | length' pip-audit-report.json)
               echo "Found $VULN_COUNT vulnerability(ies) in dependencies"
               echo ""
-              jq -r '.vulnerabilities[] | "Package: \(.name) \(.version)\nVulnerability: \(.id)\nDescription: \(.description)\nFix: \(if .fix_versions | length > 0 then "Upgrade to " + (.fix_versions | join(", ")) else "Check advisory" end)\n"' pip-audit-report.json
+              jq -r '.dependencies[] | . as $dep | .vulns[]? | "Package: \($dep.name) \($dep.version)\nVulnerability: \(.id)\nDescription: \(.description)\nFix: \(if .fix_versions | length > 0 then "Upgrade to " + (.fix_versions | join(", ")) else "Check advisory" end)\n"' pip-audit-report.json
             fi
             exit $EXIT_CODE
           }
           echo "✅ No dependency vulnerabilities found"
 
       - name: Upload security reports
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: security-reports
@@ -118,7 +117,7 @@ jobs:
           
           # Check pip-audit results
           if [ -f pip-audit-report.json ]; then
-            AUDIT_VULNS=$(jq '.vulnerabilities | length' pip-audit-report.json)
+            AUDIT_VULNS=$(jq '[.dependencies[]?.vulns[]?] | length' pip-audit-report.json)
             if [ "$AUDIT_VULNS" -gt 0 ]; then
               echo "❌ **pip-audit**: Found $AUDIT_VULNS vulnerabilities" >> $GITHUB_STEP_SUMMARY
             else

@@ -1,4 +1,4 @@
-minimum_prek_version: "0.2.0"
+minimum_pre_commit_version: "4.5.1"
 
 default_install_hook_types:
   - pre-commit
@@ -9,52 +9,67 @@ default_install_hook_types:
 repos:
   - repo: https://github.com/astral-sh/uv-pre-commit
     # uv version.
-    rev: 0.9.2
+    rev: "d9fca3320346514799461a80b0753eb45d707d46"  # 0.11.28
     hooks:
       - id: uv-sync
-        
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: "f8a3f8c471fb698229face5ed7640a64900b781e"  # v0.4.4
+    rev: "6fec9b7edb08fd9989088709d864a7826dc74e80"  # v0.15.12
     hooks:
       - id: ruff
         args: [--fix]
-        exclude: ^(scripts/|\.claude/skills/)
+        exclude: ^(scripts/|plugins/[^/]+/references/|\.claude/skills/)
       - id: ruff-format
-        exclude: ^(scripts/|\.claude/skills/)
+        exclude: ^(scripts/|plugins/[^/]+/references/|\.claude/skills/)
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: "9db9854e3041219b1eb619872a2dfaf58adfb20b"  # v1.9.0
+    rev: "fc0f09a29bb495f4a91f00266155d6282d52485d"  # v1.20.2
     hooks:
       - id: mypy
         additional_dependencies: [types-python-dateutil, types-requests]
-        exclude: ^(scripts/|\.claude/skills/)
+        files: ^mcp_zammad/
+        exclude: ^(scripts/|plugins/[^/]+/references/|\.codex/skills/|\.claude/skills/)
 
   - repo: https://github.com/PyCQA/bandit
-    rev: "f3a18ab30bc444e62d02505419ab7059cead0853"  # 1.7.6
+    rev: "92ae8b82fb422a639f0ed8d99e96cea769594e08"  # 1.9.4
     hooks:
       - id: bandit
         args: ["-f", "json"]
-        exclude: ^(tests/|scripts/|\.claude/skills/)
+        exclude: ^(tests/|scripts/|plugins/[^/]+/references/|\.claude/skills/)
         # Note: Removed pass_filenames: false to only scan changed files
         # This improves commit speed while still maintaining security checks
         # Full tree scan still happens in CI/CD via 'bandit -r mcp_zammad/'
         # Output streams to stdout for pre-commit to capture
 
   - repo: https://github.com/semgrep/semgrep
-    rev: "5abdc505a8fe8e663e50beb10b92edb9d990ffa5"  # v1.35.0
+    rev: "09c90f40de48bac000f6d49f978a65ee8a09a3f4"  # v1.169.0
     hooks:
       - id: semgrep
-        args: ["--config=auto", "--error", "--no-rewrite-rule-ids"]
-        exclude: ^(scripts/|\.claude/skills/)
+        args:
+          - "--config=auto"
+          - "--error"
+          - "--no-rewrite-rule-ids"
+          # Version PRs are disabled in Dependabot; Renovate inherits central policy.
+          - "--exclude-rule=package_managers.dependabot.dependabot-missing-cooldown.dependabot-missing-cooldown"
+          - "--exclude-rule=package_managers.renovate.renovate-missing-minimum-release-age.renovate-missing-minimum-release-age"
+          # A global uv cooldown can delay newly released vulnerability fixes.
+          - "--exclude-rule=package_managers.uv.uv-missing-dependency-cooldown.uv-missing-dependency-cooldown"
+        exclude: ^(scripts/|plugins/[^/]+/references/|\.claude/skills/)
 
   - repo: https://github.com/rvben/rumdl-pre-commit
-    rev: "v0.0.99"
+    rev: "8f5dd7416d031646aa5607fc56092723650fd873"  # v0.2.30
     hooks:
       - id: rumdl
         name: rumdl
         description: "Lint Markdown files with rumdl"
+        exclude: ^plugins/
         # Configuration in .rumdl.toml
         # Exclusions handled in .rumdl.toml via exclude patterns
+      - id: rumdl-fmt
+        name: rumdl format
+        description: "Format Markdown files with rumdl"
+        stages: [manual]
+        exclude: ^plugins/
 
   - repo: local
     hooks:
@@ -64,12 +79,10 @@ repos:
         language: system
         args: [
           "run",
-          "pip-audit",
-          "--format=json",
-          # Ignore pip path traversal vuln - will be fixed in pip 25.3 (not yet released)
-          "--ignore-vuln=GHSA-4xh5-x5gv-qwph",
-          # Ignore starlette Range header DoS - indirect dependency via fastmcp
-          "--ignore-vuln=GHSA-7f5h-v6xp-fcq8"
+          "python",
+          "-m",
+          "pip_audit",
+          "--format=json"
         ]
         pass_filenames: false
         # Output streams to stdout for pre-commit to capture
@@ -88,5 +101,5 @@ repos:
           bash -c 'found=0; for file in "$@"; do inside_fence=0; line_num=0; while IFS= read -r line; do line_num=$((line_num+1)); if [[ "$line" =~ ^[[:space:]]*\`\`\` ]]; then inside_fence=$((1-inside_fence)); fi; if [[ $inside_fence -eq 0 && "$line" =~ ^[[:space:]]*([2-9]|[0-9]{2,})\. ]]; then echo "❌ $file:$line_num Use '\''1.'\'' for all numbered list items to reduce diff churn"; found=1; fi; done < "$file"; done; exit $found' --
         language: system
         files: '\.md$'
-        exclude: ^(docs/|\.claude/|SECURITY\.md|CONTRIBUTING\.md|README\.md)
+        exclude: ^(docs/|plugins/|\.claude/|SECURITY\.md|CONTRIBUTING\.md|README\.md)
         pass_filenames: true
