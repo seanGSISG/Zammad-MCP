@@ -48,6 +48,7 @@ from mcp_zammad.server import (
     CHARACTER_LIMIT,
     AttachmentDeletionError,
     ZammadMCPServer,
+    _build_export_record,
     _format_ticket_detail_markdown,
     _resolve_export_path,
     _strip_html_tags,
@@ -3689,3 +3690,74 @@ class TestResolveExportPath:
         params = TicketExportParams(output_path="export.jsonl", delay_seconds=0.0)
         with pytest.raises(ValueError, match="ZAMMAD_EXPORT_DIR is not set"):
             test_tools["zammad_export_tickets"](params)
+
+
+class TestExportExpandedFields:
+    """Export records must recover expanded names the detail endpoint cannot return."""
+
+    def test_summary_supplies_expanded_names(self):
+        """find() returns *_id only, so names come from the expanded batch summary."""
+        detail = {"id": 1, "number": "1001", "title": "T", "group_id": 2, "state_id": 3, "priority_id": 4}
+        summary = {"id": 1, "group": "GSI Tech Team", "state": "closed", "priority": "2 normal"}
+        record = _build_export_record(detail, include_internal=False, summary=summary)
+        assert record["group"] == "GSI Tech Team"
+        assert record["state"] == "closed"
+        assert record["priority"] == "2 normal"
+
+    def test_detail_takes_precedence_over_summary(self):
+        """When the detail payload does carry names, they win."""
+        detail = {"id": 1, "group": "Detail Group", "state": "open", "priority": "1 low"}
+        summary = {"id": 1, "group": "Stale Group", "state": "closed", "priority": "3 high"}
+        record = _build_export_record(detail, include_internal=False, summary=summary)
+        assert record["group"] == "Detail Group"
+        assert record["state"] == "open"
+
+    def test_missing_summary_is_safe(self):
+        """No summary yields empty strings rather than an error."""
+        record = _build_export_record({"id": 1}, include_internal=False)
+        assert record["group"] == ""
+        assert record["tags"] == []
+
+    def test_explicit_tags_used(self):
+        """Tags fetched separately land in the record."""
+        record = _build_export_record({"id": 1}, include_internal=False, tags=["network", "vpn"])
+        assert record["tags"] == ["network", "vpn"]
+
+    def test_export_fetches_tags_when_requested(self, mock_zammad_client, decorator_capturer, export_dir):
+        """include_tags triggers one get_ticket_tags call per exported ticket."""
+        mock_instance, _ = mock_zammad_client
+        mock_instance.list_tickets.side_effect = [[{"id": 1, "group": "Support"}], []]
+        mock_instance.get_ticket.side_effect = [_make_ticket_data(1, "First ticket")]
+        mock_instance.get_ticket_tags.return_value = ["network"]
+
+        server_inst = ZammadMCPServer()
+        server_inst.client = mock_instance
+        test_tools, capture_tool = decorator_capturer(server_inst.mcp.tool)
+        server_inst.mcp.tool = capture_tool  # type: ignore[method-assign, assignment]
+        server_inst.get_client = lambda: server_inst.client  # type: ignore[method-assign, assignment, return-value]
+        server_inst._setup_tools()
+
+        output_file = str(export_dir / "tags.jsonl")
+        params = TicketExportParams(output_path=output_file, delay_seconds=0.0, include_tags=True)
+        test_tools["zammad_export_tickets"](params)
+
+        mock_instance.get_ticket_tags.assert_called_once_with(1)
+        with open(output_file) as f:
+            assert json.loads(f.readline())["tags"] == ["network"]
+
+    def test_export_skips_tag_fetch_by_default(self, mock_zammad_client, decorator_capturer, export_dir):
+        """Without include_tags no extra tag calls are made."""
+        mock_instance, _ = mock_zammad_client
+        mock_instance.list_tickets.side_effect = [[{"id": 1}], []]
+        mock_instance.get_ticket.side_effect = [_make_ticket_data(1, "First ticket")]
+
+        server_inst = ZammadMCPServer()
+        server_inst.client = mock_instance
+        test_tools, capture_tool = decorator_capturer(server_inst.mcp.tool)
+        server_inst.mcp.tool = capture_tool  # type: ignore[method-assign, assignment]
+        server_inst.get_client = lambda: server_inst.client  # type: ignore[method-assign, assignment, return-value]
+        server_inst._setup_tools()
+
+        params = TicketExportParams(output_path=str(export_dir / "notags.jsonl"), delay_seconds=0.0)
+        test_tools["zammad_export_tickets"](params)
+        mock_instance.get_ticket_tags.assert_not_called()

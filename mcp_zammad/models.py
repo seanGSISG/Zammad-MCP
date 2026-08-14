@@ -678,6 +678,11 @@ class TicketExportParams(StrictBaseModel):
     include_internal_articles: bool = Field(default=False, description="Include internal notes in export")
     resume_from_page: int = Field(default=1, ge=1, description="Page to resume export from (for interrupted exports)")
     max_tickets: int | None = Field(default=None, ge=1, description="Maximum number of tickets to export")
+    include_tags: bool = Field(
+        default=False,
+        description="Fetch tags for each ticket. Tags are not part of the ticket payload, "
+        "so this costs one extra API call per ticket.",
+    )
 
     @field_validator("output_path")
     @classmethod

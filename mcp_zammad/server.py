@@ -837,25 +837,51 @@ def _resolve_export_path(output_path: str) -> Path:
     return resolved
 
 
-def _build_export_record(ticket_data: dict[str, Any], include_internal: bool) -> dict[str, Any]:
-    """Build a JSONL export record from ticket data."""
+def _build_export_record(
+    ticket_data: dict[str, Any],
+    include_internal: bool,
+    summary: dict[str, Any] | None = None,
+    tags: list[str] | None = None,
+) -> dict[str, Any]:
+    """Build a JSONL export record from ticket data.
+
+    The per-ticket detail fetch uses the Zammad ticket find endpoint, which does not
+    support expansion, so group/state/priority arrive as numeric *_id fields only. The
+    list and search endpoints do expand those names, so the batch summary the ticket
+    came from is used as a fallback for the human-readable values.
+
+    Args:
+        ticket_data: Full ticket detail, including articles.
+        include_internal: Whether internal articles are included in the conversation.
+        summary: The batch entry this ticket came from, used to recover expanded names.
+        tags: Tags fetched separately; the ticket payload never carries them.
+    """
     conversation = []
     for article in ticket_data.get("articles", []):
         if not include_internal and article.get("internal", False):
             continue
         conversation.append(_build_export_article(article))
 
-    raw_tags = ticket_data.get("tags")
-    tags = raw_tags if isinstance(raw_tags, list) else []
+    summary = summary or {}
+
+    def expanded(field: str) -> str:
+        """Prefer the detail payload, falling back to the expanded batch summary."""
+        value = _extract_expanded_field_name(ticket_data.get(field, ""))
+        if value:
+            return value
+        return _extract_expanded_field_name(summary.get(field, ""))
+
+    raw_tags = tags if tags is not None else ticket_data.get("tags")
+    resolved_tags = raw_tags if isinstance(raw_tags, list) else []
 
     return {
         "ticket_id": ticket_data.get("id"),
         "ticket_number": str(ticket_data.get("number", "")),
         "title": ticket_data.get("title", ""),
-        "group": _extract_expanded_field_name(ticket_data.get("group", "")),
-        "state": _extract_expanded_field_name(ticket_data.get("state", "")),
-        "priority": _extract_expanded_field_name(ticket_data.get("priority", "")),
-        "tags": tags,
+        "group": expanded("group"),
+        "state": expanded("state"),
+        "priority": expanded("priority"),
+        "tags": resolved_tags,
         "created_at": str(ticket_data.get("created_at", "")),
         "updated_at": str(ticket_data.get("updated_at", "")),
         "conversation": conversation,
@@ -1675,6 +1701,7 @@ class ZammadMCPServer:
                     - include_internal_articles (bool): Include internal notes (default: False)
                     - resume_from_page (int): Page to resume from (default: 1)
                     - max_tickets (int | None): Maximum tickets to export (default: None)
+                    - include_tags (bool): Fetch per-ticket tags via an extra API call (default: False)
 
             Returns:
                 str: Markdown summary with file path, counts, elapsed time, and errors
@@ -1739,7 +1766,15 @@ class ZammadMCPServer:
                             ticket_data = client.get_ticket(
                                 ticket_id=ticket_id, include_articles=True, article_limit=-1
                             )
-                            record = _build_export_record(ticket_data, params.include_internal_articles)
+                            ticket_tags: list[str] | None = None
+                            if params.include_tags:
+                                ticket_tags = client.get_ticket_tags(ticket_id)
+                            record = _build_export_record(
+                                ticket_data,
+                                params.include_internal_articles,
+                                summary=ticket_summary,
+                                tags=ticket_tags,
+                            )
                             f.write(json.dumps(record, default=str) + "\n")
                             f.flush()
                             exported_count += 1
